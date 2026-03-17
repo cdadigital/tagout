@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { MapContainer, TileLayer, GeoJSON } from "react-leaflet";
 import { getGmu, predictMap, UnitScore } from "@/lib/api";
-import L from "leaflet";
+import type L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
 function getColor(pct: number): string {
@@ -26,10 +26,12 @@ export default function GMUMap({ species, year, onUnitClick }: Props) {
   );
   const [scores, setScores] = useState<Record<string, UnitScore>>({});
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     async function load() {
       setLoading(true);
+      setError("");
       try {
         const [geo, mapScores] = await Promise.all([
           getGmu(),
@@ -40,6 +42,8 @@ export default function GMUMap({ species, year, onUnitClick }: Props) {
         mapScores.forEach((s) => (scoreMap[s.hunt_unit] = s));
         setScores(scoreMap);
       } catch (err) {
+        const msg = err instanceof Error ? err.message : "Failed to load map";
+        setError(msg);
         console.error("Failed to load map data:", err);
       } finally {
         setLoading(false);
@@ -85,6 +89,14 @@ export default function GMUMap({ species, year, onUnitClick }: Props) {
     return (
       <div className="h-full flex items-center justify-center text-gray-400">
         Loading map...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="h-full flex items-center justify-center text-red-400 text-sm px-4 text-center">
+        {error}
       </div>
     );
   }

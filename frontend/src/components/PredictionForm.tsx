@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { predict, PredictResponse } from "@/lib/api";
 
 const UNITS = ["1", "2", "3", "4", "4A", "5", "6", "7", "9"];
@@ -19,10 +19,10 @@ export default function PredictionForm({ onResult, selectedUnit }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // Sync external unit selection
-  if (selectedUnit && selectedUnit !== unit) {
-    setUnit(selectedUnit);
-  }
+  // Sync external unit selection (e.g. from map click)
+  useEffect(() => {
+    if (selectedUnit) setUnit(selectedUnit);
+  }, [selectedUnit]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
