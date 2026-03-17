@@ -2,8 +2,9 @@
 Tagout API — hunting success prediction for Idaho Panhandle.
 
 Endpoints:
-  POST /v1/predict          — predict success for species + unit + date range
-  GET  /v1/predict/map      — all units scored for choropleth
+  POST /v1/predict          — predict success for species + unit (upcoming season)
+  GET  /v1/predict/map      — all units ranked for choropleth
+  GET  /v1/predict/compare  — side-by-side unit comparison
   GET  /v1/harvest/stats    — historical stats per unit
   GET  /v1/gmu              — GMU list with boundaries
   GET  /v1/species          — species reference
@@ -27,10 +28,12 @@ MODEL_PATH = DATA_DIR / "models" / "xgb_success.pkl"
 META_PATH = DATA_DIR / "models" / "model_meta.json"
 GEOJSON_PATH = DATA_DIR / "shapefiles" / "hunt_units.geojson"
 
+CURRENT_SEASON = 2025  # upcoming season
+
 app = FastAPI(
     title="Tagout API",
     description="Hunting success prediction for Idaho Panhandle",
-    version="0.1.0",
+    version="0.2.0",
 )
 
 app.add_middleware(
@@ -60,19 +63,22 @@ def get_db():
 
 
 class PredictRequest(BaseModel):
-    species: str
-    hunt_unit: str
-    year: Optional[int] = 2024
+    species: str = "Elk"
+    hunt_unit: str = "5"
 
 
 class PredictResponse(BaseModel):
     species: str
     hunt_unit: str
-    year: int
+    season: int
     predicted_success_pct: float
-    historical_avg: Optional[float]
+    historical_3yr_avg: Optional[float]
+    historical_5yr_avg: Optional[float]
+    trend: str  # "improving", "declining", "stable"
+    hunter_pressure: Optional[str]  # "low", "moderate", "high"
     confidence_note: str
     top_factors: dict
+    recommendation: str
 
 
 class UnitScore(BaseModel):
@@ -80,24 +86,69 @@ class UnitScore(BaseModel):
     species: str
     predicted_success_pct: float
     historical_avg: Optional[float]
+    rank: int
+    trend: str
 
 
-class HarvestStats(BaseModel):
+class CompareUnit(BaseModel):
     hunt_unit: str
-    species: str
-    season_year: int
-    success_pct: Optional[float]
-    kills: Optional[float]
-    hunter_count: Optional[float]
-    hunter_days: Optional[float]
+    predicted_success_pct: float
+    historical_avg: Optional[float]
+    avg_hunters: Optional[int]
+    avg_days_per_hunter: Optional[float]
+    trend: str
+    pros: list
+    cons: list
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
-def get_unit_features(con, hunt_unit: str, species: str, year: int) -> dict:
-    """Build feature dict for a single prediction."""
-    # Historical success (3yr avg from years before target)
+def get_historical_stats(con, hunt_unit: str, species: str):
+    """Get historical stats for a unit-species combo."""
+    rows = con.execute(f"""
+        SELECT season_year, success_pct, kills, hunter_count, hunter_days
+        FROM harvest
+        WHERE hunt_unit = '{hunt_unit}'
+          AND species = '{species}'
+          AND weapon_type = 'All Weapons Combined'
+          AND success_pct IS NOT NULL
+        ORDER BY season_year
+    """).df()
+    return rows
+
+
+def compute_trend(rows: pd.DataFrame) -> str:
+    """Determine if success rate is trending up, down, or flat."""
+    if len(rows) < 4:
+        return "stable"
+    recent_3 = rows.tail(3)["success_pct"].mean()
+    prior_3 = rows.iloc[-6:-3]["success_pct"].mean() if len(rows) >= 6 else rows.head(3)["success_pct"].mean()
+    delta = recent_3 - prior_3
+    if delta > 2:
+        return "improving"
+    elif delta < -2:
+        return "declining"
+    return "stable"
+
+
+def classify_pressure(avg_hunters: float) -> str:
+    """Classify hunter pressure based on avg hunter count."""
+    if avg_hunters < 500:
+        return "low"
+    elif avg_hunters < 2000:
+        return "moderate"
+    return "high"
+
+
+def get_unit_features(con, hunt_unit: str, species: str) -> dict:
+    """
+    Build feature dict for predicting the upcoming season.
+    Uses most recent 3 years for historical features.
+    For weather, uses climate normals (average of all available years)
+    since we don't have future weather data.
+    """
+    # Historical success (most recent 3 years)
     hist = con.execute(f"""
         SELECT AVG(success_pct) AS avg_success,
                AVG(CAST(hunter_days AS FLOAT) / NULLIF(hunter_count, 0)) AS avg_days_per_hunter
@@ -105,39 +156,58 @@ def get_unit_features(con, hunt_unit: str, species: str, year: int) -> dict:
         WHERE hunt_unit = '{hunt_unit}'
           AND species = '{species}'
           AND weapon_type = 'All Weapons Combined'
-          AND season_year BETWEEN {year - 3} AND {year - 1}
+          AND season_year >= {CURRENT_SEASON - 3}
     """).fetchone()
 
     success_3yr_avg = hist[0] if hist[0] is not None else 10.0
     days_per_hunter = hist[1] if hist[1] is not None else 6.0
 
-    # Weather features for the target year (or most recent available)
+    # Weather: use climate normals (average across all available years)
+    # This is the best estimate for a future season
     weather = con.execute(f"""
         SELECT
             ROUND(AVG(temperature_2m_mean), 1)  AS temp_mean,
-            ROUND(MIN(temperature_2m_min), 1)   AS temp_min_season,
-            ROUND(MAX(temperature_2m_max), 1)   AS temp_max_season,
-            ROUND(STDDEV(temperature_2m_mean), 1) AS temp_std,
-            ROUND(
+            ROUND(AVG(min_temp), 1)             AS temp_min_season,
+            ROUND(AVG(max_temp), 1)             AS temp_max_season,
+            ROUND(AVG(temp_std), 1)             AS temp_std,
+            ROUND(AVG(early_late_delta), 1)     AS temp_early_late_delta,
+            ROUND(AVG(precip_total), 2)         AS precip_total_in,
+            ROUND(AVG(precip_days), 0)          AS precip_days,
+            ROUND(AVG(snow_total), 2)           AS snow_total_in,
+            ROUND(AVG(snow_days), 0)            AS snow_days,
+            ROUND(AVG(max_snow_depth), 1)       AS snow_depth_max,
+            ROUND(AVG(first_snow), 0)           AS first_snow_doy,
+            ROUND(AVG(wind_max), 1)             AS wind_avg_max,
+            ROUND(AVG(gust_max), 1)             AS wind_gust_max,
+            ROUND(AVG(high_wind), 0)            AS high_wind_days,
+            ROUND(AVG(pressure), 1)             AS pressure_mean,
+            ROUND(AVG(pressure_sd), 2)          AS pressure_std,
+            ROUND(AVG(daylight), 2)             AS daylight_avg_hrs
+        FROM (
+            SELECT
+                season_year,
+                AVG(temperature_2m_mean) AS temperature_2m_mean,
+                MIN(temperature_2m_min) AS min_temp,
+                MAX(temperature_2m_max) AS max_temp,
+                STDDEV(temperature_2m_mean) AS temp_std,
                 AVG(CASE WHEN EXTRACT(MONTH FROM CAST(date AS DATE)) <= 9 THEN temperature_2m_mean END) -
-                AVG(CASE WHEN EXTRACT(MONTH FROM CAST(date AS DATE)) >= 11 THEN temperature_2m_mean END),
-            1) AS temp_early_late_delta,
-            ROUND(SUM(precipitation_sum), 2)    AS precip_total_in,
-            COUNT(CASE WHEN precipitation_sum > 0.1 THEN 1 END) AS precip_days,
-            ROUND(SUM(snowfall_sum), 2)         AS snow_total_in,
-            COUNT(CASE WHEN snowfall_sum > 0 THEN 1 END) AS snow_days,
-            ROUND(MAX(snow_depth_max), 1)       AS snow_depth_max,
-            MIN(CASE WHEN snowfall_sum > 0 THEN
-                EXTRACT(DOY FROM CAST(date AS DATE)) END) AS first_snow_doy,
-            ROUND(AVG(wind_speed_10m_max), 1)   AS wind_avg_max,
-            ROUND(MAX(wind_gusts_10m_max), 1)   AS wind_gust_max,
-            COUNT(CASE WHEN wind_speed_10m_max > 20 THEN 1 END) AS high_wind_days,
-            ROUND(AVG(pressure_msl_mean), 1)    AS pressure_mean,
-            ROUND(STDDEV(pressure_msl_mean), 2) AS pressure_std,
-            ROUND(AVG(daylight_duration) / 3600, 2) AS daylight_avg_hrs
-        FROM weather
-        WHERE hunt_unit = '{hunt_unit}'
-          AND season_year = {year}
+                AVG(CASE WHEN EXTRACT(MONTH FROM CAST(date AS DATE)) >= 11 THEN temperature_2m_mean END) AS early_late_delta,
+                SUM(precipitation_sum) AS precip_total,
+                COUNT(CASE WHEN precipitation_sum > 0.1 THEN 1 END) AS precip_days,
+                SUM(snowfall_sum) AS snow_total,
+                COUNT(CASE WHEN snowfall_sum > 0 THEN 1 END) AS snow_days,
+                MAX(snow_depth_max) AS max_snow_depth,
+                MIN(CASE WHEN snowfall_sum > 0 THEN EXTRACT(DOY FROM CAST(date AS DATE)) END) AS first_snow,
+                AVG(wind_speed_10m_max) AS wind_max,
+                MAX(wind_gusts_10m_max) AS gust_max,
+                COUNT(CASE WHEN wind_speed_10m_max > 20 THEN 1 END) AS high_wind,
+                AVG(pressure_msl_mean) AS pressure,
+                STDDEV(pressure_msl_mean) AS pressure_sd,
+                AVG(daylight_duration) / 3600 AS daylight
+            FROM weather
+            WHERE hunt_unit = '{hunt_unit}'
+            GROUP BY season_year
+        ) yearly_aggs
     """).fetchone()
 
     col_names = [
@@ -158,7 +228,7 @@ def get_unit_features(con, hunt_unit: str, species: str, year: int) -> dict:
 
     features["success_3yr_avg"] = round(success_3yr_avg, 1)
     features["days_per_hunter"] = round(days_per_hunter, 1)
-    features["year_offset"] = year - 2003
+    features["year_offset"] = CURRENT_SEASON - 2003
 
     # One-hot encode unit + species
     for u in PANHANDLE_UNITS:
@@ -169,6 +239,32 @@ def get_unit_features(con, hunt_unit: str, species: str, year: int) -> dict:
     return features, success_3yr_avg
 
 
+def make_recommendation(pct: float, trend: str, pressure: str) -> str:
+    """Generate a plain-English recommendation."""
+    if pct >= 20:
+        quality = "This is one of the best units in the Panhandle"
+    elif pct >= 15:
+        quality = "Above-average unit with solid opportunity"
+    elif pct >= 10:
+        quality = "Average success rate — typical for this region"
+    else:
+        quality = "Below-average success rate — challenging hunting"
+
+    trend_text = {
+        "improving": "Success rates have been trending upward recently.",
+        "declining": "Success rates have been declining — herd or conditions may be shifting.",
+        "stable": "Success rates have been consistent over recent years.",
+    }[trend]
+
+    pressure_text = {
+        "low": "Low hunter pressure means less competition.",
+        "moderate": "Moderate hunter pressure.",
+        "high": "High hunter pressure — consider hunting midweek or deeper backcountry.",
+    }[pressure]
+
+    return f"{quality}. {trend_text} {pressure_text}"
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 
@@ -176,8 +272,9 @@ def get_unit_features(con, hunt_unit: str, species: str, year: int) -> dict:
 def root():
     return {
         "app": "Tagout",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "description": "Idaho Panhandle hunting success prediction",
+        "season": CURRENT_SEASON,
     }
 
 
@@ -189,53 +286,151 @@ def predict(req: PredictRequest):
         raise HTTPException(400, f"Hunt unit must be one of {PANHANDLE_UNITS}")
 
     con = get_db()
-    features, hist_avg = get_unit_features(con, req.hunt_unit, req.species, req.year)
+    features, hist_3yr = get_unit_features(con, req.hunt_unit, req.species)
+
+    # Historical analysis
+    hist_rows = get_historical_stats(con, req.hunt_unit, req.species)
+    trend = compute_trend(hist_rows)
+
+    hist_5yr = None
+    avg_hunters = None
+    if not hist_rows.empty:
+        recent_5 = hist_rows.tail(5)
+        hist_5yr = round(recent_5["success_pct"].mean(), 1)
+        avg_hunters = int(recent_5["hunter_count"].mean())
+
+    pressure = classify_pressure(avg_hunters) if avg_hunters else "moderate"
     con.close()
 
-    # Build feature vector in model's expected order
+    # Predict
     feature_names = model_meta["features"]
     X = pd.DataFrame([{f: features.get(f, -999) for f in feature_names}])
-
     pred = float(model.predict(X)[0])
     pred = max(0, min(100, round(pred, 1)))
 
-    # Top contributing features (from model importance)
+    # Top factors with readable names
     importance = model_meta.get("feature_importance", {})
+    readable = {
+        "success_3yr_avg": "Historical success rate",
+        "snow_days": "Snow days",
+        "precip_total_in": "Precipitation",
+        "temp_mean": "Temperature",
+        "wind_avg_max": "Wind",
+        "pressure_std": "Weather variability",
+        "daylight_avg_hrs": "Daylight hours",
+        "days_per_hunter": "Hunter effort",
+        "year_offset": "Long-term trend",
+    }
     top = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:5]
-    top_factors = {k: round(v, 3) for k, v in top}
+    top_factors = {}
+    for k, v in top:
+        label = readable.get(k, k.replace("_", " ").replace("hunt unit", "Unit").replace("species ", ""))
+        top_factors[label] = round(v, 3)
+
+    rec = make_recommendation(pred, trend, pressure)
 
     return PredictResponse(
         species=req.species,
         hunt_unit=req.hunt_unit,
-        year=req.year,
+        season=CURRENT_SEASON,
         predicted_success_pct=pred,
-        historical_avg=round(hist_avg, 1) if hist_avg else None,
-        confidence_note="Based on 22 years of IDFG harvest data + seasonal weather patterns",
+        historical_3yr_avg=round(hist_3yr, 1) if hist_3yr else None,
+        historical_5yr_avg=hist_5yr,
+        trend=trend,
+        hunter_pressure=pressure,
+        confidence_note="Based on 22 years of IDFG harvest data and historical weather patterns. Uses climate normals for upcoming season weather.",
         top_factors=top_factors,
+        recommendation=rec,
     )
 
 
 @app.get("/v1/predict/map")
-def predict_map(
-    species: str = Query("Elk"),
-    year: int = Query(2024),
-):
+def predict_map(species: str = Query("Elk")):
+    """Rank all units for the upcoming season."""
     if species not in SPECIES_LIST:
         raise HTTPException(400, f"Species must be one of {SPECIES_LIST}")
 
     con = get_db()
     results = []
     for unit in PANHANDLE_UNITS:
-        features, hist_avg = get_unit_features(con, unit, species, year)
+        features, hist_avg = get_unit_features(con, unit, species)
+        hist_rows = get_historical_stats(con, unit, species)
+        trend = compute_trend(hist_rows)
+
         feature_names = model_meta["features"]
         X = pd.DataFrame([{f: features.get(f, -999) for f in feature_names}])
         pred = float(model.predict(X)[0])
         pred = max(0, min(100, round(pred, 1)))
-        results.append(UnitScore(
+        results.append({
+            "hunt_unit": unit,
+            "species": species,
+            "predicted_success_pct": pred,
+            "historical_avg": round(hist_avg, 1) if hist_avg else None,
+            "trend": trend,
+        })
+    con.close()
+
+    # Rank by predicted success
+    results.sort(key=lambda x: x["predicted_success_pct"], reverse=True)
+    for i, r in enumerate(results):
+        r["rank"] = i + 1
+
+    return [UnitScore(**r) for r in results]
+
+
+@app.get("/v1/predict/compare")
+def compare_units(
+    species: str = Query("Elk"),
+    units: str = Query("5,6", description="Comma-separated unit IDs"),
+):
+    """Side-by-side comparison of specific units."""
+    unit_list = [u.strip() for u in units.split(",")]
+    for u in unit_list:
+        if u not in PANHANDLE_UNITS:
+            raise HTTPException(400, f"Invalid unit: {u}")
+
+    con = get_db()
+    results = []
+    for unit in unit_list:
+        features, hist_avg = get_unit_features(con, unit, species)
+        hist_rows = get_historical_stats(con, unit, species)
+        trend = compute_trend(hist_rows)
+
+        feature_names = model_meta["features"]
+        X = pd.DataFrame([{f: features.get(f, -999) for f in feature_names}])
+        pred = float(model.predict(X)[0])
+        pred = max(0, min(100, round(pred, 1)))
+
+        # Compute stats for pros/cons
+        avg_hunters = int(hist_rows.tail(5)["hunter_count"].mean()) if not hist_rows.empty else None
+        avg_dphr = round(hist_rows.tail(5).apply(
+            lambda r: r["hunter_days"] / r["hunter_count"] if r["hunter_count"] > 0 else 0, axis=1
+        ).mean(), 1) if not hist_rows.empty else None
+
+        pros = []
+        cons = []
+        if pred >= 15:
+            pros.append("Above-average success rate")
+        elif pred < 9:
+            cons.append("Below-average success rate")
+        if trend == "improving":
+            pros.append("Trending upward")
+        elif trend == "declining":
+            cons.append("Trending downward")
+        if avg_hunters and avg_hunters < 1000:
+            pros.append("Lower hunter pressure")
+        elif avg_hunters and avg_hunters > 3000:
+            cons.append("High hunter pressure")
+
+        results.append(CompareUnit(
             hunt_unit=unit,
-            species=species,
             predicted_success_pct=pred,
             historical_avg=round(hist_avg, 1) if hist_avg else None,
+            avg_hunters=avg_hunters,
+            avg_days_per_hunter=avg_dphr,
+            trend=trend,
+            pros=pros,
+            cons=cons,
         ))
     con.close()
     return results
@@ -269,7 +464,6 @@ def gmu_list():
         raise HTTPException(500, "GeoJSON not found")
     with open(GEOJSON_PATH) as f:
         geojson = json.load(f)
-    # Filter to Panhandle units only
     features = [
         feat for feat in geojson["features"]
         if feat["properties"].get("NAME") in PANHANDLE_UNITS

@@ -8,21 +8,21 @@ export default function Home() {
           <span className="text-amber-500">TAGOUT</span>
         </h1>
         <p className="mt-4 text-xl text-gray-400">
-          Idaho Panhandle hunting success predictions powered by 22 years of
-          IDFG harvest data and seasonal weather patterns.
+          Which unit should you hunt this fall? Get 2025 season predictions for
+          Idaho Panhandle elk and deer — powered by 22 years of IDFG data.
         </p>
         <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
           <Link
             href="/predict"
             className="px-8 py-3 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg transition-colors text-center"
           >
-            Get a Prediction
+            Check Your Unit
           </Link>
           <Link
             href="/map"
             className="px-8 py-3 bg-gray-700 hover:bg-gray-600 text-white font-semibold rounded-lg transition-colors text-center"
           >
-            View Map
+            See Unit Rankings
           </Link>
         </div>
 
@@ -36,15 +36,15 @@ export default function Home() {
             <div className="text-sm text-gray-500 mt-1">Years of Data</div>
           </div>
           <div>
-            <div className="text-3xl font-bold text-amber-500">94%</div>
+            <div className="text-3xl font-bold text-amber-500">R² .94</div>
             <div className="text-sm text-gray-500 mt-1">Model Accuracy</div>
           </div>
         </div>
 
         <p className="mt-12 text-xs text-gray-600 max-w-lg mx-auto">
           Data from Idaho Department of Fish and Game. Weather from Open-Meteo.
-          Predictions are statistical estimates based on historical patterns —
-          not guarantees. Always check current regulations at idfg.idaho.gov.
+          Predictions are statistical estimates — not guarantees.
+          Always check current regulations at idfg.idaho.gov.
         </p>
       </div>
     </div>

@@ -5,7 +5,6 @@ import { predict, PredictResponse } from "@/lib/api";
 
 const UNITS = ["1", "2", "3", "4", "4A", "5", "6", "7", "9"];
 const SPECIES = ["Elk", "Deer"];
-const YEARS = Array.from({ length: 22 }, (_, i) => 2024 - i);
 
 interface Props {
   onResult: (result: PredictResponse) => void;
@@ -15,11 +14,9 @@ interface Props {
 export default function PredictionForm({ onResult, selectedUnit }: Props) {
   const [species, setSpecies] = useState("Elk");
   const [unit, setUnit] = useState(selectedUnit || "5");
-  const [year, setYear] = useState(2024);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // Sync external unit selection (e.g. from map click)
   useEffect(() => {
     if (selectedUnit) setUnit(selectedUnit);
   }, [selectedUnit]);
@@ -29,7 +26,7 @@ export default function PredictionForm({ onResult, selectedUnit }: Props) {
     setLoading(true);
     setError("");
     try {
-      const result = await predict({ species, hunt_unit: unit, year });
+      const result = await predict({ species, hunt_unit: unit });
       onResult(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Prediction failed");
@@ -40,6 +37,10 @@ export default function PredictionForm({ onResult, selectedUnit }: Props) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="text-xs text-amber-500 font-medium uppercase tracking-wider">
+        2025 Season Forecast
+      </div>
+
       <div>
         <label className="block text-sm font-medium text-gray-300 mb-1">
           Species
@@ -79,29 +80,12 @@ export default function PredictionForm({ onResult, selectedUnit }: Props) {
         </select>
       </div>
 
-      <div>
-        <label className="block text-sm font-medium text-gray-300 mb-1">
-          Year
-        </label>
-        <select
-          value={year}
-          onChange={(e) => setYear(Number(e.target.value))}
-          className="w-full px-3 py-2 bg-gray-700 text-white rounded-lg border border-gray-600 focus:border-amber-500 focus:outline-none"
-        >
-          {YEARS.map((y) => (
-            <option key={y} value={y}>
-              {y}
-            </option>
-          ))}
-        </select>
-      </div>
-
       <button
         type="submit"
         disabled={loading}
         className="w-full py-3 bg-amber-600 hover:bg-amber-700 disabled:bg-gray-600 text-white font-semibold rounded-lg transition-colors"
       >
-        {loading ? "Predicting..." : "Predict Success Rate"}
+        {loading ? "Predicting..." : "How's This Unit Look?"}
       </button>
 
       {error && <p className="text-red-400 text-sm">{error}</p>}

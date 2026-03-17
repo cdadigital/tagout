@@ -7,23 +7,20 @@ import type L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
 function getColor(pct: number): string {
-  if (pct >= 20) return "#16a34a"; // green-600
-  if (pct >= 15) return "#65a30d"; // lime-600
-  if (pct >= 12) return "#ca8a04"; // yellow-600
-  if (pct >= 9) return "#ea580c"; // orange-600
-  return "#dc2626"; // red-600
+  if (pct >= 20) return "#16a34a";
+  if (pct >= 15) return "#65a30d";
+  if (pct >= 12) return "#ca8a04";
+  if (pct >= 9) return "#ea580c";
+  return "#dc2626";
 }
 
 interface Props {
   species: string;
-  year: number;
   onUnitClick?: (unitId: string) => void;
 }
 
-export default function GMUMap({ species, year, onUnitClick }: Props) {
-  const [geojson, setGeojson] = useState<GeoJSON.FeatureCollection | null>(
-    null
-  );
+export default function GMUMap({ species, onUnitClick }: Props) {
+  const [geojson, setGeojson] = useState<GeoJSON.FeatureCollection | null>(null);
   const [scores, setScores] = useState<Record<string, UnitScore>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -35,7 +32,7 @@ export default function GMUMap({ species, year, onUnitClick }: Props) {
       try {
         const [geo, mapScores] = await Promise.all([
           getGmu(),
-          predictMap(species, year),
+          predictMap(species),
         ]);
         setGeojson(geo);
         const scoreMap: Record<string, UnitScore> = {};
@@ -44,13 +41,12 @@ export default function GMUMap({ species, year, onUnitClick }: Props) {
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Failed to load map";
         setError(msg);
-        console.error("Failed to load map data:", err);
       } finally {
         setLoading(false);
       }
     }
     load();
-  }, [species, year]);
+  }, [species]);
 
   const style = (feature: GeoJSON.Feature | undefined) => {
     if (!feature) return {};
@@ -66,16 +62,14 @@ export default function GMUMap({ species, year, onUnitClick }: Props) {
     };
   };
 
-  const onEachFeature = (
-    feature: GeoJSON.Feature,
-    layer: L.Layer
-  ) => {
+  const onEachFeature = (feature: GeoJSON.Feature, layer: L.Layer) => {
     const unitName = feature.properties?.NAME;
     const score = scores[unitName];
     if (score) {
+      const trendIcon = score.trend === "improving" ? " ↑" : score.trend === "declining" ? " ↓" : "";
       layer.bindTooltip(
-        `<strong>Unit ${unitName}</strong><br/>` +
-          `Predicted: ${score.predicted_success_pct}%<br/>` +
+        `<strong>Unit ${unitName}</strong> (#${score.rank})<br/>` +
+          `2025 Forecast: ${score.predicted_success_pct}%${trendIcon}<br/>` +
           `Historical: ${score.historical_avg ?? "N/A"}%`,
         { sticky: true }
       );
@@ -114,7 +108,7 @@ export default function GMUMap({ species, year, onUnitClick }: Props) {
       />
       {geojson && (
         <GeoJSON
-          key={`${species}-${year}`}
+          key={species}
           data={geojson}
           style={style}
           onEachFeature={onEachFeature}
