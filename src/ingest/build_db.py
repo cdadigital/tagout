@@ -1,109 +1,76 @@
 """
-Load all raw CSVs into a DuckDB database for analysis.
+Load harvest CSVs into a DuckDB database for analysis.
 Creates a single normalized `harvest` table.
 
 Run after fetch_harvest.py has downloaded raw CSVs.
+
+Usage:
+    python -m src.ingest.build_db
 """
 import duckdb
 import pandas as pd
 from pathlib import Path
-import json
 
 RAW_DIR = Path(__file__).parents[2] / "data" / "raw"
 DB_PATH = Path(__file__).parents[2] / "data" / "tagout.duckdb"
 
 
-COLUMN_ALIASES = {
-    # Normalize whatever IDFG exports to consistent names
-    # These will be updated once we see actual CSV headers
-    "unit": "hunt_unit",
-    "Unit": "hunt_unit",
-    "HuntUnit": "hunt_unit",
-    "species": "species",
-    "Species": "species",
-    "year": "season_year",
-    "Year": "season_year",
-    "Season": "season_year",
-    "success": "success_pct",
-    "Success": "success_pct",
-    "SuccessRate": "success_pct",
-    "hunters": "hunter_count",
-    "Hunters": "hunter_count",
-    "kills": "kills",
-    "Kills": "kills",
-    "Harvest": "kills",
-    "hunter_days": "hunter_days",
-    "HunterDays": "hunter_days",
-    "weapon": "weapon_type",
-    "Weapon": "weapon_type",
-    "WeaponType": "weapon_type",
-}
-
-
-def load_csvs() -> pd.DataFrame:
-    """Load all raw harvest CSVs and combine into a single DataFrame."""
-    manifest_path = RAW_DIR / "scrape_manifest.json"
-    if not manifest_path.exists():
-        raise FileNotFoundError("No scrape_manifest.json found. Run fetch_harvest.py first.")
-
-    with open(manifest_path) as f:
-        manifest = json.load(f)
+def load_panhandle_csvs() -> pd.DataFrame:
+    """Load all *_panhandle.csv files from the raw data directory."""
+    csvs = sorted(RAW_DIR.glob("harvest_*_panhandle.csv"))
+    if not csvs:
+        raise FileNotFoundError(
+            f"No panhandle CSVs found in {RAW_DIR}. Run fetch_harvest.py first."
+        )
 
     frames = []
-    for entry in manifest:
-        path = Path(entry["path"])
-        if not path or not Path(path).exists():
-            continue
+    for path in csvs:
+        print(f"  Loading {path.name}...")
         df = pd.read_csv(path)
-        # Tag with species/year in case columns are missing
-        df["_species_raw"] = entry["species"]
-        df["_year_raw"] = entry["year"]
         frames.append(df)
-
-    if not frames:
-        raise ValueError("No CSV files loaded. Check raw data directory.")
 
     combined = pd.concat(frames, ignore_index=True)
     return combined
 
 
-def normalize(df: pd.DataFrame) -> pd.DataFrame:
-    """Rename columns to consistent schema."""
-    df = df.rename(columns={k: v for k, v in COLUMN_ALIASES.items() if k in df.columns})
-    return df
+def load_weather() -> pd.DataFrame:
+    """Load weather CSV."""
+    path = RAW_DIR / "weather_panhandle.csv"
+    if not path.exists():
+        raise FileNotFoundError(f"No weather CSV at {path}. Run fetch_weather.py first.")
+    print(f"  Loading {path.name}...")
+    return pd.read_csv(path)
 
 
-def build_db(df: pd.DataFrame):
-    """Write normalized DataFrame to DuckDB."""
+def build_db(harvest_df: pd.DataFrame, weather_df: pd.DataFrame):
+    """Write DataFrames to DuckDB."""
     con = duckdb.connect(str(DB_PATH))
 
     con.execute("DROP TABLE IF EXISTS harvest")
-    con.execute("""
-        CREATE TABLE harvest AS SELECT * FROM df
-    """)
+    con.execute("CREATE TABLE harvest AS SELECT * FROM harvest_df")
+    h_count = con.execute("SELECT COUNT(*) FROM harvest").fetchone()[0]
+    print(f"Built harvest table: {h_count:,} rows")
 
-    count = con.execute("SELECT COUNT(*) FROM harvest").fetchone()[0]
-    print(f"Built harvest table: {count:,} rows")
+    con.execute("DROP TABLE IF EXISTS weather")
+    con.execute("CREATE TABLE weather AS SELECT * FROM weather_df")
+    w_count = con.execute("SELECT COUNT(*) FROM weather").fetchone()[0]
+    print(f"Built weather table: {w_count:,} rows")
+
     print(f"Database: {DB_PATH}")
-
-    # Show sample
-    print("\nSample:")
-    print(con.execute("SELECT * FROM harvest LIMIT 5").df())
-
     con.close()
 
 
 def main():
-    print("Loading CSVs...")
-    df = load_csvs()
-    print(f"Raw rows: {len(df):,}")
+    print("Loading panhandle harvest CSVs...")
+    harvest_df = load_panhandle_csvs()
+    print(f"Harvest rows: {len(harvest_df):,}")
 
-    print("Normalizing columns...")
-    df = normalize(df)
-    print(f"Columns: {list(df.columns)}")
+    print("Loading weather data...")
+    weather_df = load_weather()
+    print(f"Weather rows: {len(weather_df):,}")
 
-    print("Building DuckDB...")
-    build_db(df)
+    print("\nBuilding DuckDB...")
+    build_db(harvest_df, weather_df)
 
 
 if __name__ == "__main__":
