@@ -9,7 +9,8 @@ venv/
 data/raw/
 data/processed/
 data/training.csv
-*.duckdb
+# Keep tagout.duckdb for deploy (2MB)
+# *.duckdb
 
 # Keep models and shapefiles (needed for deploy)
 # data/models/
