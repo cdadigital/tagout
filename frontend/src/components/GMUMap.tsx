@@ -66,12 +66,12 @@ export default function GMUMap({ species, onUnitClick }: Props) {
     const unitName = feature.properties?.NAME;
     const score = scores[unitName];
     if (score) {
-      const trendIcon = score.trend === "improving" ? " ↑" : score.trend === "declining" ? " ↓" : "";
+      const trendIcon =
+        score.trend === "improving" ? " ↑" : score.trend === "declining" ? " ↓" : "";
       layer.bindTooltip(
-        `<strong>Unit ${unitName}</strong> (#${score.rank})<br/>` +
-          `2025 Forecast: ${score.predicted_success_pct}%${trendIcon}<br/>` +
-          `Historical: ${score.historical_avg ?? "N/A"}%`,
-        { sticky: true }
+        `<strong>Unit ${unitName}</strong><br/>` +
+          `${score.predicted_success_pct}%${trendIcon}`,
+        { sticky: true, className: "leaflet-tooltip-dark" }
       );
     }
     layer.on("click", () => {
@@ -81,7 +81,7 @@ export default function GMUMap({ species, onUnitClick }: Props) {
 
   if (loading) {
     return (
-      <div className="h-full flex items-center justify-center text-gray-400">
+      <div className="h-full flex items-center justify-center text-gray-400 text-sm">
         Loading map...
       </div>
     );
@@ -99,11 +99,12 @@ export default function GMUMap({ species, onUnitClick }: Props) {
     <MapContainer
       center={[47.6, -116.2]}
       zoom={8}
-      className="h-full w-full rounded-lg"
+      className="h-full w-full"
       style={{ background: "#1f2937" }}
+      zoomControl={false}
     >
       <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
         url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
       />
       {geojson && (

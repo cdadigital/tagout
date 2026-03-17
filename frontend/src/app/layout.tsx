@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import Link from "next/link";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -16,7 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Tagout — Idaho Hunting Predictions",
   description:
-    "Predict hunting success rates for Idaho Panhandle using IDFG data + weather patterns",
+    "2025 season predictions for Idaho Panhandle elk and deer — powered by 22 years of IDFG data",
 };
 
 export default function RootLayout({
@@ -27,33 +26,18 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-gray-900 text-white min-h-screen`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#0c0f14] text-white min-h-screen`}
       >
-        <nav className="border-b border-gray-800 bg-gray-900/80 backdrop-blur-sm sticky top-0 z-50">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex items-center justify-between h-14">
-              <Link href="/" className="flex items-center gap-2">
-                <span className="text-xl font-bold text-amber-500">
-                  TAGOUT
-                </span>
-              </Link>
-              <div className="flex items-center gap-6">
-                <Link
-                  href="/predict"
-                  className="text-sm text-gray-300 hover:text-white transition-colors"
-                >
-                  Predict
-                </Link>
-                <Link
-                  href="/map"
-                  className="text-sm text-gray-300 hover:text-white transition-colors"
-                >
-                  Map
-                </Link>
-              </div>
-            </div>
+        <header className="border-b border-gray-800/50 bg-[#0c0f14]/80 backdrop-blur-md sticky top-0 z-50">
+          <div className="max-w-lg mx-auto px-4 h-12 flex items-center justify-between">
+            <span className="text-lg font-bold text-amber-500 tracking-tight">
+              TAGOUT
+            </span>
+            <span className="text-[10px] text-gray-600 uppercase tracking-widest">
+              2025 Season
+            </span>
           </div>
-        </nav>
+        </header>
         <main>{children}</main>
       </body>
     </html>
