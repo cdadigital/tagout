@@ -5,6 +5,16 @@ export interface PredictRequest {
   hunt_unit: string;
 }
 
+export interface PressureInfo {
+  level: string;
+  avg_hunters: number | null;
+  avg_days_per_hunter: number | null;
+  total_hunter_days: number | null;
+  hunters_trend: string | null;
+  panhandle_rank: number | null;
+  panhandle_total_units: number;
+}
+
 export interface PredictResponse {
   species: string;
   hunt_unit: string;
@@ -13,7 +23,7 @@ export interface PredictResponse {
   historical_3yr_avg: number | null;
   historical_5yr_avg: number | null;
   trend: string;
-  hunter_pressure: string | null;
+  pressure: PressureInfo | null;
   confidence_note: string;
   top_factors: Record<string, number>;
   recommendation: string;

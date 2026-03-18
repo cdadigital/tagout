@@ -67,6 +67,16 @@ class PredictRequest(BaseModel):
     hunt_unit: str = "5"
 
 
+class PressureInfo(BaseModel):
+    level: str  # "low", "moderate", "high"
+    avg_hunters: Optional[int]
+    avg_days_per_hunter: Optional[float]
+    total_hunter_days: Optional[int]
+    hunters_trend: Optional[str]  # "increasing", "decreasing", "steady"
+    panhandle_rank: Optional[int]  # 1 = most crowded
+    panhandle_total_units: int = 9
+
+
 class PredictResponse(BaseModel):
     species: str
     hunt_unit: str
@@ -74,8 +84,8 @@ class PredictResponse(BaseModel):
     predicted_success_pct: float
     historical_3yr_avg: Optional[float]
     historical_5yr_avg: Optional[float]
-    trend: str  # "improving", "declining", "stable"
-    hunter_pressure: Optional[str]  # "low", "moderate", "high"
+    trend: str
+    pressure: Optional[PressureInfo]
     confidence_note: str
     top_factors: dict
     recommendation: str
@@ -294,12 +304,60 @@ def predict(req: PredictRequest):
 
     hist_5yr = None
     avg_hunters = None
+    avg_dphr = None
+    total_hdays = None
+    hunters_trend = None
     if not hist_rows.empty:
         recent_5 = hist_rows.tail(5)
         hist_5yr = round(recent_5["success_pct"].mean(), 1)
         avg_hunters = int(recent_5["hunter_count"].mean())
+        avg_dphr = round(
+            recent_5.apply(
+                lambda r: r["hunter_days"] / r["hunter_count"] if r["hunter_count"] > 0 else 0,
+                axis=1,
+            ).mean(), 1
+        )
+        total_hdays = int(recent_5["hunter_days"].mean())
 
-    pressure = classify_pressure(avg_hunters) if avg_hunters else "moderate"
+        # Hunter count trend (recent 3 vs prior 3)
+        if len(hist_rows) >= 6:
+            recent_hunters = hist_rows.tail(3)["hunter_count"].mean()
+            prior_hunters = hist_rows.iloc[-6:-3]["hunter_count"].mean()
+            hdelta = (recent_hunters - prior_hunters) / prior_hunters * 100 if prior_hunters > 0 else 0
+            if hdelta > 10:
+                hunters_trend = "increasing"
+            elif hdelta < -10:
+                hunters_trend = "decreasing"
+            else:
+                hunters_trend = "steady"
+
+    pressure_level = classify_pressure(avg_hunters) if avg_hunters else "moderate"
+
+    # Rank this unit by hunter count among all panhandle units for same species
+    pressure_rank = None
+    all_units_hunters = con.execute(f"""
+        SELECT hunt_unit, AVG(hunter_count) AS avg_hc
+        FROM harvest
+        WHERE species = '{req.species}'
+          AND weapon_type = 'All Weapons Combined'
+          AND season_year >= {CURRENT_SEASON - 5}
+        GROUP BY hunt_unit
+        ORDER BY avg_hc DESC
+    """).df()
+    if not all_units_hunters.empty:
+        ranked = all_units_hunters.reset_index(drop=True)
+        match = ranked[ranked["hunt_unit"] == req.hunt_unit]
+        if not match.empty:
+            pressure_rank = int(match.index[0]) + 1
+
+    pressure_info = PressureInfo(
+        level=pressure_level,
+        avg_hunters=avg_hunters,
+        avg_days_per_hunter=avg_dphr,
+        total_hunter_days=total_hdays,
+        hunters_trend=hunters_trend,
+        panhandle_rank=pressure_rank,
+    )
     con.close()
 
     # Predict
@@ -327,7 +385,7 @@ def predict(req: PredictRequest):
         label = readable.get(k, k.replace("_", " ").replace("hunt unit", "Unit").replace("species ", ""))
         top_factors[label] = round(v, 3)
 
-    rec = make_recommendation(pred, trend, pressure)
+    rec = make_recommendation(pred, trend, pressure_level)
 
     return PredictResponse(
         species=req.species,
@@ -337,7 +395,7 @@ def predict(req: PredictRequest):
         historical_3yr_avg=round(hist_3yr, 1) if hist_3yr else None,
         historical_5yr_avg=hist_5yr,
         trend=trend,
-        hunter_pressure=pressure,
+        pressure=pressure_info,
         confidence_note="Based on 22 years of IDFG harvest data and historical weather patterns. Uses climate normals for upcoming season weather.",
         top_factors=top_factors,
         recommendation=rec,

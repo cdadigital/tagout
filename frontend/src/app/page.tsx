@@ -188,22 +188,55 @@ export default function Home() {
             />
           </div>
 
+          {/* Hunter Pressure */}
+          {result.pressure && (
+            <div className="card p-5">
+              <h3 className="text-[11px] text-gray-500 uppercase tracking-widest mb-3">
+                Hunter Pressure
+              </h3>
+              <div className="flex items-center gap-3 mb-4">
+                <span className={`text-2xl font-bold capitalize ${
+                  result.pressure.level === "low" ? "text-emerald-400" :
+                  result.pressure.level === "high" ? "text-red-400" : "text-yellow-400"
+                }`}>
+                  {result.pressure.level}
+                </span>
+                {result.pressure.panhandle_rank && (
+                  <span className="text-xs text-gray-500">
+                    #{result.pressure.panhandle_rank} of {result.pressure.panhandle_total_units} units
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <div className="text-lg font-bold text-white tabular-nums">
+                    {result.pressure.avg_hunters?.toLocaleString() ?? "—"}
+                  </div>
+                  <div className="text-[10px] text-gray-500 uppercase">
+                    Hunters{result.pressure.hunters_trend === "increasing" ? " ↑" : result.pressure.hunters_trend === "decreasing" ? " ↓" : ""}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-lg font-bold text-white tabular-nums">
+                    {result.pressure.avg_days_per_hunter ?? "—"}
+                  </div>
+                  <div className="text-[10px] text-gray-500 uppercase">Days/Hunter</div>
+                </div>
+                <div>
+                  <div className="text-lg font-bold text-white tabular-nums">
+                    {result.pressure.total_hunter_days ? `${(result.pressure.total_hunter_days / 1000).toFixed(1)}k` : "—"}
+                  </div>
+                  <div className="text-[10px] text-gray-500 uppercase">Total Days</div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Recommendation */}
           <div className="card p-5">
             <p className="text-[13px] text-gray-300 leading-relaxed">
               {result.recommendation}
             </p>
-            {result.hunter_pressure && (
-              <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-700/40">
-                <span className="text-xs text-gray-500">Hunter Pressure</span>
-                <span className={`text-xs font-semibold capitalize ${
-                  result.hunter_pressure === "low" ? "text-emerald-400" :
-                  result.hunter_pressure === "high" ? "text-red-400" : "text-yellow-400"
-                }`}>
-                  {result.hunter_pressure}
-                </span>
-              </div>
-            )}
           </div>
 
           {/* Unit Rankings */}
