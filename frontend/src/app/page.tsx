@@ -3,12 +3,19 @@
 import { useEffect, useState, useCallback } from "react";
 import dynamic from "next/dynamic";
 import YoYChart from "@/components/YoYChart";
-import { predict, predictMap, PredictResponse, UnitScore } from "@/lib/api";
+import { predict, predictMap, PredictResponse, UnitScore, WeaponBreakdown } from "@/lib/api";
 
 const GMUMap = dynamic(() => import("@/components/GMUMap"), { ssr: false });
 
 const UNITS = ["1", "2", "3", "4", "4A", "5", "6", "7", "9"];
 const SPECIES = ["Elk", "Deer"];
+
+const WEAPON_OPTIONS = [
+  { label: "All", value: "All Weapons Combined" },
+  { label: "Rifle", value: "Any Weapon" },
+  { label: "Archery", value: "Archery" },
+  { label: "Muzz.", value: "Muzzleloader" },
+];
 
 function getGrade(pct: number) {
   if (pct >= 25) return { label: "Excellent", color: "text-emerald-400", ring: "ring-emerald-500/30" };
@@ -17,20 +24,31 @@ function getGrade(pct: number) {
   return { label: "Tough", color: "text-red-400", ring: "ring-red-500/30" };
 }
 
-type Tab = "history" | "pressure" | "compare";
+function getQualityColor(label: string) {
+  const l = label.toLowerCase();
+  if (l.includes("excellent") || l.includes("above")) return { text: "text-emerald-400", bg: "bg-emerald-500/10" };
+  if (l.includes("average") && !l.includes("below")) return { text: "text-yellow-400", bg: "bg-yellow-500/10" };
+  if (l.includes("below") || l.includes("poor")) return { text: "text-red-400", bg: "bg-red-500/10" };
+  return { text: "text-gray-400", bg: "bg-gray-500/10" };
+}
+
+type Tab = "history" | "pressure" | "weather" | "quality" | "compare";
 
 export default function Home() {
   const [species, setSpecies] = useState("Elk");
   const [unit, setUnit] = useState("");
+  const [weaponType, setWeaponType] = useState("All Weapons Combined");
   const [result, setResult] = useState<PredictResponse | null>(null);
   const [rankings, setRankings] = useState<UnitScore[]>([]);
   const [loading, setLoading] = useState(false);
   const [showMap, setShowMap] = useState(false);
   const [tab, setTab] = useState<Tab>("history");
 
+  const isWeaponFiltered = weaponType !== "All Weapons Combined";
+
   useEffect(() => {
-    predictMap(species).then(setRankings).catch(console.error);
-  }, [species]);
+    predictMap(species, weaponType).then(setRankings).catch(console.error);
+  }, [species, weaponType]);
 
   const runPredict = useCallback(async (s: string, u: string) => {
     if (!u) return;
@@ -54,8 +72,23 @@ export default function Home() {
     setShowMap(false);
   };
 
-  const grade = result ? getGrade(result.predicted_success_pct) : null;
+  // Find the matching weapon breakdown entry for the selected weapon
+  const activeWeapon: WeaponBreakdown | undefined = result?.weapon_breakdown?.find(
+    (w) => w.weapon_type === weaponType
+  );
+
+  // Hero number: weapon-specific 3yr avg or model prediction
+  const heroPct = isWeaponFiltered && activeWeapon
+    ? activeWeapon.success_pct_3yr
+    : result?.predicted_success_pct ?? 0;
+
+  const grade = result ? getGrade(heroPct) : null;
   const p = result?.pressure;
+  const weather = result?.weather_profile;
+  const quality = result?.antler_quality;
+
+  // Weapon label for display
+  const weaponLabel = WEAPON_OPTIONS.find((w) => w.value === weaponType)?.label ?? "All";
 
   return (
     <div className="max-w-lg mx-auto px-4 pb-12">
@@ -74,6 +107,22 @@ export default function Home() {
               }`}
             >
               {s}
+            </button>
+          ))}
+        </div>
+        {/* Weapon toggle */}
+        <div className="flex gap-1 p-0.5 bg-gray-800/40 rounded-lg mb-2">
+          {WEAPON_OPTIONS.map((w) => (
+            <button
+              key={w.value}
+              onClick={() => setWeaponType(w.value)}
+              className={`flex-1 py-1.5 rounded-md text-xs font-semibold transition-all duration-150 ${
+                weaponType === w.value
+                  ? "bg-gray-700/80 text-amber-400"
+                  : "text-gray-600 active:bg-gray-700/30"
+              }`}
+            >
+              {w.label}
             </button>
           ))}
         </div>
@@ -129,7 +178,9 @@ export default function Home() {
       {!unit && !loading && (
         <div className="mt-2">
           <div className="text-[11px] text-gray-600 uppercase tracking-widest mb-3 px-1">
-            {species} — 2025 Season Rankings
+            {species} — {isWeaponFiltered
+              ? `${weaponLabel} 3yr Avg`
+              : "2025 Season Rankings"}
           </div>
           <div className="space-y-1">
             {rankings.map((r) => (
@@ -149,7 +200,7 @@ export default function Home() {
                         ? "bg-emerald-500/10 text-emerald-400"
                         : "bg-red-500/10 text-red-400"
                     }`}>
-                      {r.trend === "improving" ? "↑ up" : "↓ down"}
+                      {r.trend === "improving" ? "up" : "down"}
                     </span>
                   )}
                 </div>
@@ -182,37 +233,91 @@ export default function Home() {
                 </div>
                 <div className="flex items-baseline gap-1 mt-1">
                   <span className="text-5xl font-bold text-white score-glow tracking-tight">
-                    {result.predicted_success_pct}
+                    {heroPct}
                   </span>
                   <span className="text-xl text-gray-500">%</span>
                 </div>
+                {isWeaponFiltered && activeWeapon ? (
+                  <div className="text-[10px] text-gray-500 mt-0.5">
+                    3yr Avg ({activeWeapon.weapon_label})
+                  </div>
+                ) : (
+                  <div className="text-[10px] text-gray-600 mt-0.5">2025 forecast</div>
+                )}
               </div>
               <div className="text-right">
                 <div className={`text-sm font-semibold ${grade?.color}`}>{grade?.label}</div>
-                <div className="text-[10px] text-gray-600 mt-0.5">2025 forecast</div>
+                {isWeaponFiltered && (
+                  <div className="text-[10px] text-gray-500 mt-1">
+                    All-weapon forecast:{" "}
+                    <span className="text-white font-semibold">{result.predicted_success_pct}%</span>
+                  </div>
+                )}
               </div>
             </div>
 
             {/* Comparison strip */}
             <div className="flex gap-4 py-3 border-t border-b border-gray-700/30 mb-4">
-              <div className="flex-1">
-                <span className="text-white font-semibold tabular-nums">{result.historical_3yr_avg ?? "—"}%</span>
-                <span className="text-[10px] text-gray-500 ml-1.5">3yr avg</span>
-              </div>
-              <div className="flex-1">
-                <span className="text-white font-semibold tabular-nums">{result.historical_5yr_avg ?? "—"}%</span>
-                <span className="text-[10px] text-gray-500 ml-1.5">5yr avg</span>
-              </div>
-              <div>
-                <span className={`font-semibold ${
-                  result.trend === "improving" ? "text-emerald-400" :
-                  result.trend === "declining" ? "text-red-400" : "text-gray-400"
-                }`}>
-                  {result.trend === "improving" ? "↑" : result.trend === "declining" ? "↓" : "→"}
-                </span>
-                <span className="text-[10px] text-gray-500 ml-1.5 capitalize">{result.trend}</span>
-              </div>
+              {isWeaponFiltered && activeWeapon ? (
+                <>
+                  <div className="flex-1">
+                    <span className="text-white font-semibold tabular-nums">{activeWeapon.success_pct_3yr}%</span>
+                    <span className="text-[10px] text-gray-500 ml-1.5">3yr avg</span>
+                  </div>
+                  <div className="flex-1">
+                    <span className="text-white font-semibold tabular-nums">{activeWeapon.success_pct_5yr}%</span>
+                    <span className="text-[10px] text-gray-500 ml-1.5">5yr avg</span>
+                  </div>
+                  <div>
+                    <span className="text-white font-semibold tabular-nums">{activeWeapon.avg_days_per_hunter}</span>
+                    <span className="text-[10px] text-gray-500 ml-1.5">days/hunter</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex-1">
+                    <span className="text-white font-semibold tabular-nums">{result.historical_3yr_avg ?? "—"}%</span>
+                    <span className="text-[10px] text-gray-500 ml-1.5">3yr avg</span>
+                  </div>
+                  <div className="flex-1">
+                    <span className="text-white font-semibold tabular-nums">{result.historical_5yr_avg ?? "—"}%</span>
+                    <span className="text-[10px] text-gray-500 ml-1.5">5yr avg</span>
+                  </div>
+                  <div>
+                    <span className={`font-semibold ${
+                      result.trend === "improving" ? "text-emerald-400" :
+                      result.trend === "declining" ? "text-red-400" : "text-gray-400"
+                    }`}>
+                      {result.trend === "improving" ? "↑" : result.trend === "declining" ? "↓" : "→"}
+                    </span>
+                    <span className="text-[10px] text-gray-500 ml-1.5 capitalize">{result.trend}</span>
+                  </div>
+                </>
+              )}
             </div>
+
+            {/* Weapon breakdown mini-row (when showing all weapons) */}
+            {!isWeaponFiltered && result.weapon_breakdown && result.weapon_breakdown.length > 0 && (
+              <div className="flex gap-3 pb-3 mb-3 border-b border-gray-700/30">
+                {result.weapon_breakdown.map((w) => (
+                  <button
+                    key={w.weapon_type}
+                    onClick={() => setWeaponType(w.weapon_type)}
+                    className="flex-1 text-center group"
+                  >
+                    <div className="text-sm font-bold text-white tabular-nums group-active:text-amber-400">
+                      {w.success_pct_3yr}%
+                    </div>
+                    <div className="text-[9px] text-gray-600 uppercase">
+                      {w.weapon_label}
+                      {w.avg_hunters < 20 && (
+                        <span className="block text-yellow-600">Small sample</span>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Recommendation */}
             <p className="text-[13px] text-gray-300 leading-relaxed">
@@ -220,25 +325,29 @@ export default function Home() {
             </p>
           </div>
 
-          {/* ── Tab Bar ────────────────────────────────── */}
-          <div className="flex gap-1 p-1 bg-gray-800/40 rounded-xl">
-            {([
-              { key: "history" as Tab, label: "History" },
-              { key: "pressure" as Tab, label: "Pressure" },
-              { key: "compare" as Tab, label: "All Units" },
-            ]).map((t) => (
-              <button
-                key={t.key}
-                onClick={() => setTab(t.key)}
-                className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-all duration-150 ${
-                  tab === t.key
-                    ? "bg-gray-700/80 text-white"
-                    : "text-gray-500 active:bg-gray-700/30"
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
+          {/* ── Tab Bar (scrollable) ─────────────────────── */}
+          <div className="overflow-x-auto whitespace-nowrap -mx-4 px-4">
+            <div className="inline-flex gap-1 p-1 bg-gray-800/40 rounded-xl min-w-full">
+              {([
+                { key: "history" as Tab, label: "History" },
+                { key: "pressure" as Tab, label: "Pressure" },
+                { key: "weather" as Tab, label: "Weather" },
+                { key: "quality" as Tab, label: "Quality" },
+                { key: "compare" as Tab, label: "All Units" },
+              ]).map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => setTab(t.key)}
+                  className={`flex-shrink-0 flex-1 py-2 px-3 rounded-lg text-xs font-semibold transition-all duration-150 ${
+                    tab === t.key
+                      ? "bg-gray-700/80 text-white"
+                      : "text-gray-500 active:bg-gray-700/30"
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* ── Tab: History ───────────────────────────── */}
@@ -250,6 +359,7 @@ export default function Home() {
                 </h3>
                 <span className="text-[10px] text-gray-600">
                   Unit {result.hunt_unit}
+                  {isWeaponFiltered && ` · ${weaponLabel}`}
                 </span>
               </div>
               <YoYChart
@@ -257,6 +367,7 @@ export default function Home() {
                 huntUnit={result.hunt_unit}
                 predictedPct={result.predicted_success_pct}
                 predictedYear={result.season}
+                weaponType={weaponType}
               />
             </div>
           )}
@@ -323,9 +434,190 @@ export default function Home() {
             </div>
           )}
 
+          {/* ── Tab: Weather ────────────────────────────── */}
+          {tab === "weather" && (
+            <div className="card p-5">
+              {weather ? (
+                <>
+                  <div className="flex items-center justify-between mb-5">
+                    <h3 className="text-[11px] text-gray-500 uppercase tracking-widest">
+                      Season Weather Normals
+                    </h3>
+                    <span className="text-[10px] text-gray-600">
+                      Unit {result.hunt_unit}
+                    </span>
+                  </div>
+
+                  {/* First snow callout */}
+                  <div className="text-center mb-5 py-3 bg-blue-500/5 rounded-xl border border-blue-500/10">
+                    <div className="text-[10px] text-blue-400/60 uppercase tracking-widest mb-1">
+                      First Snow
+                    </div>
+                    <div className="text-2xl font-bold text-blue-300">
+                      {weather.first_snow_date}
+                    </div>
+                  </div>
+
+                  {/* Weather grid */}
+                  <div className="grid grid-cols-2 gap-3 mb-4">
+                    <div className="bg-gray-800/30 rounded-xl p-3 text-center">
+                      <div className="text-lg font-bold text-white tabular-nums">
+                        {weather.avg_high}° / {weather.avg_low}°
+                      </div>
+                      <div className="text-[10px] text-gray-500 uppercase mt-0.5">Avg High / Low</div>
+                    </div>
+                    <div className="bg-gray-800/30 rounded-xl p-3 text-center">
+                      <div className="text-lg font-bold text-white tabular-nums">
+                        {weather.total_snow_days}
+                      </div>
+                      <div className="text-[10px] text-gray-500 uppercase mt-0.5">Snow Days</div>
+                    </div>
+                    <div className="bg-gray-800/30 rounded-xl p-3 text-center">
+                      <div className="text-lg font-bold text-white tabular-nums">
+                        {weather.max_snow_depth}&quot;
+                      </div>
+                      <div className="text-[10px] text-gray-500 uppercase mt-0.5">Max Depth</div>
+                    </div>
+                    <div className="bg-gray-800/30 rounded-xl p-3 text-center">
+                      <div className="text-lg font-bold text-white tabular-nums">
+                        {weather.snow_total_in}&quot;
+                      </div>
+                      <div className="text-[10px] text-gray-500 uppercase mt-0.5">Total Snow</div>
+                    </div>
+                    <div className="bg-gray-800/30 rounded-xl p-3 text-center">
+                      <div className="text-lg font-bold text-white tabular-nums">
+                        {weather.total_precip_days}
+                      </div>
+                      <div className="text-[10px] text-gray-500 uppercase mt-0.5">Precip Days</div>
+                    </div>
+                    <div className="bg-gray-800/30 rounded-xl p-3 text-center">
+                      <div className="text-lg font-bold text-white tabular-nums">
+                        {weather.precip_total_in}&quot;
+                      </div>
+                      <div className="text-[10px] text-gray-500 uppercase mt-0.5">Total Precip</div>
+                    </div>
+                  </div>
+
+                  {/* Context */}
+                  <div className="text-xs text-gray-500 leading-relaxed border-t border-gray-700/30 pt-3">
+                    Historical weather averages during hunting season. Early snow pushes
+                    elk to lower elevations and can dramatically improve success rates.
+                  </div>
+                </>
+              ) : (
+                <div className="text-gray-600 text-xs py-8 text-center">
+                  No weather data available for this unit.
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Tab: Quality (Antler) ──────────────────── */}
+          {tab === "quality" && (
+            <div className="card p-5">
+              {quality ? (
+                <>
+                  <div className="flex items-center justify-between mb-5">
+                    <h3 className="text-[11px] text-gray-500 uppercase tracking-widest">
+                      Antler Quality
+                    </h3>
+                    <span className={`text-xs font-semibold px-2.5 py-1 rounded-lg ${getQualityColor(quality.quality_label).text} ${getQualityColor(quality.quality_label).bg}`}>
+                      {quality.quality_label}
+                    </span>
+                  </div>
+
+                  {/* Antlered ratio */}
+                  <div className="mb-5">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs text-gray-500">Antlered</span>
+                      <span className="text-xs text-gray-500">Antlerless</span>
+                    </div>
+                    <div className="h-3 bg-gray-700/50 rounded-full overflow-hidden flex">
+                      <div
+                        className="bg-amber-500/80 rounded-l-full transition-all duration-500"
+                        style={{ width: `${quality.antlered_pct}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between mt-1">
+                      <span className="text-xs font-semibold text-amber-400 tabular-nums">
+                        {quality.antlered_pct}%
+                      </span>
+                      <span className="text-xs font-semibold text-gray-500 tabular-nums">
+                        {(100 - quality.antlered_pct).toFixed(0)}%
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Species-specific quality metrics */}
+                  {species === "Elk" ? (
+                    <div className="grid grid-cols-2 gap-3 mb-4">
+                      {quality.spike_pct !== null && (
+                        <div className="bg-gray-800/30 rounded-xl p-3 text-center">
+                          <div className="text-2xl font-bold text-white tabular-nums">
+                            {quality.spike_pct}%
+                          </div>
+                          <div className="text-[10px] text-gray-500 uppercase mt-0.5">Spikes</div>
+                        </div>
+                      )}
+                      {quality.six_plus_pt_pct !== null && (
+                        <div className="bg-gray-800/30 rounded-xl p-3 text-center">
+                          <div className="text-2xl font-bold text-emerald-400 tabular-nums">
+                            {quality.six_plus_pt_pct}%
+                          </div>
+                          <div className="text-[10px] text-gray-500 uppercase mt-0.5">6+ Point</div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-3 mb-4">
+                      {quality.four_pt_pct !== null && (
+                        <div className="bg-gray-800/30 rounded-xl p-3 text-center">
+                          <div className="text-2xl font-bold text-white tabular-nums">
+                            {quality.four_pt_pct}%
+                          </div>
+                          <div className="text-[10px] text-gray-500 uppercase mt-0.5">4-Point</div>
+                        </div>
+                      )}
+                      {quality.five_plus_pt_pct !== null && (
+                        <div className="bg-gray-800/30 rounded-xl p-3 text-center">
+                          <div className="text-2xl font-bold text-emerald-400 tabular-nums">
+                            {quality.five_plus_pt_pct}%
+                          </div>
+                          <div className="text-[10px] text-gray-500 uppercase mt-0.5">5+ Point</div>
+                        </div>
+                      )}
+                      {quality.whitetail_pct !== null && (
+                        <div className="bg-gray-800/30 rounded-xl p-3 text-center col-span-2">
+                          <div className="text-2xl font-bold text-white tabular-nums">
+                            {quality.whitetail_pct}%
+                          </div>
+                          <div className="text-[10px] text-gray-500 uppercase mt-0.5">Whitetail</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Context */}
+                  <div className="text-xs text-gray-500 leading-relaxed border-t border-gray-700/30 pt-3">
+                    {species === "Elk"
+                      ? "Spike percentage indicates younger bulls; higher 6+ point rates suggest a mature herd with better trophy potential."
+                      : "Point class breakdown from IDFG harvest surveys. Higher 5+ point rates indicate stronger age structure and trophy opportunity."}
+                  </div>
+                </>
+              ) : (
+                <div className="text-gray-600 text-xs py-8 text-center">
+                  No antler quality data available for this unit.
+                </div>
+              )}
+            </div>
+          )}
+
           {/* ── Tab: All Units ─────────────────────────── */}
           {tab === "compare" && (
             <div className="card p-4">
+              <div className="text-[11px] text-gray-600 uppercase tracking-widest mb-3 px-1">
+                {isWeaponFiltered ? `${weaponLabel} 3yr Avg` : "2025 Season Rankings"}
+              </div>
               <div className="space-y-1">
                 {rankings.map((r) => {
                   const isCurrent = r.hunt_unit === unit;

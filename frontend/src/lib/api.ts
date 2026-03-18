@@ -15,6 +15,37 @@ export interface PressureInfo {
   panhandle_total_units: number;
 }
 
+export interface WeatherProfile {
+  avg_temp: number;
+  avg_high: number;
+  avg_low: number;
+  first_snow_date: string;
+  total_snow_days: number;
+  total_precip_days: number;
+  max_snow_depth: number;
+  snow_total_in: number;
+  precip_total_in: number;
+}
+
+export interface AntlerQuality {
+  antlered_pct: number;
+  spike_pct: number | null;
+  six_plus_pt_pct: number | null;
+  four_pt_pct: number | null;
+  five_plus_pt_pct: number | null;
+  whitetail_pct: number | null;
+  quality_label: string;
+}
+
+export interface WeaponBreakdown {
+  weapon_type: string;
+  weapon_label: string;
+  success_pct_3yr: number;
+  success_pct_5yr: number;
+  avg_hunters: number;
+  avg_days_per_hunter: number;
+}
+
 export interface PredictResponse {
   species: string;
   hunt_unit: string;
@@ -27,6 +58,9 @@ export interface PredictResponse {
   confidence_note: string;
   top_factors: Record<string, number>;
   recommendation: string;
+  weather_profile: WeatherProfile | null;
+  antler_quality: AntlerQuality | null;
+  weapon_breakdown: WeaponBreakdown[] | null;
 }
 
 export interface UnitScore {
@@ -69,8 +103,12 @@ export async function predict(req: PredictRequest): Promise<PredictResponse> {
   return res.json();
 }
 
-export async function predictMap(species: string): Promise<UnitScore[]> {
-  const res = await fetch(`${API_BASE}/v1/predict/map?species=${species}`);
+export async function predictMap(species: string, weaponType?: string): Promise<UnitScore[]> {
+  let url = `${API_BASE}/v1/predict/map?species=${species}`;
+  if (weaponType && weaponType !== "All Weapons Combined") {
+    url += `&weapon_type=${encodeURIComponent(weaponType)}`;
+  }
+  const res = await fetch(url);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -88,10 +126,14 @@ export async function compareUnits(
 
 export async function getHarvestStats(
   species: string,
-  huntUnit?: string
+  huntUnit?: string,
+  weaponType?: string
 ): Promise<HarvestStat[]> {
   let url = `${API_BASE}/v1/harvest/stats?species=${species}`;
   if (huntUnit) url += `&hunt_unit=${huntUnit}`;
+  if (weaponType && weaponType !== "All Weapons Combined") {
+    url += `&weapon_type=${encodeURIComponent(weaponType)}`;
+  }
   const res = await fetch(url);
   if (!res.ok) throw new Error(await res.text());
   return res.json();

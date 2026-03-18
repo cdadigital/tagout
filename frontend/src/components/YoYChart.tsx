@@ -18,6 +18,7 @@ interface Props {
   huntUnit: string;
   predictedPct: number;
   predictedYear: number;
+  weaponType?: string;
 }
 
 interface ChartRow {
@@ -27,15 +28,17 @@ interface ChartRow {
   isPrediction: boolean;
 }
 
-export default function YoYChart({ species, huntUnit, predictedPct, predictedYear }: Props) {
+export default function YoYChart({ species, huntUnit, predictedPct, predictedYear, weaponType }: Props) {
   const [data, setData] = useState<ChartRow[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const showPrediction = !weaponType || weaponType === "All Weapons Combined";
 
   useEffect(() => {
     async function load() {
       setLoading(true);
       try {
-        const stats: HarvestStat[] = await getHarvestStats(species, huntUnit);
+        const stats: HarvestStat[] = await getHarvestStats(species, huntUnit, weaponType);
         const recent = stats
           .filter((s) => s.success_pct !== null)
           .sort((a, b) => a.season_year - b.season_year)
@@ -48,12 +51,14 @@ export default function YoYChart({ species, huntUnit, predictedPct, predictedYea
           isPrediction: false,
         }));
 
-        rows.push({
-          year: `'${String(predictedYear).slice(-2)}`,
-          fullYear: predictedYear,
-          pct: Number(predictedPct.toFixed(1)),
-          isPrediction: true,
-        });
+        if (showPrediction) {
+          rows.push({
+            year: `'${String(predictedYear).slice(-2)}`,
+            fullYear: predictedYear,
+            pct: Number(predictedPct.toFixed(1)),
+            isPrediction: true,
+          });
+        }
 
         setData(rows);
       } catch (err) {
@@ -63,7 +68,7 @@ export default function YoYChart({ species, huntUnit, predictedPct, predictedYea
       }
     }
     load();
-  }, [species, huntUnit, predictedPct, predictedYear]);
+  }, [species, huntUnit, predictedPct, predictedYear, weaponType, showPrediction]);
 
   if (loading) {
     return (
